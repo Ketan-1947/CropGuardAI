@@ -39,6 +39,7 @@ import {
   Layers,
   Sparkles,
   CreditCard,
+  Pill,
 } from "lucide-react";
 
 // API Configuration
@@ -57,6 +58,16 @@ interface PredictionResult {
   supported_crops: string[];
 }
 
+interface TreatmentRecommendation {
+  available: boolean;
+  disease?: string;
+  crop?: string;
+  confidence?: number;
+  recommendations?: string;
+  model_used?: string;
+  error?: string;
+}
+
 export default function CropGuardAILandingPage() {
   const [showWaitlistModal, setShowWaitlistModal] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -68,6 +79,10 @@ export default function CropGuardAILandingPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  // Treatment recommendations state
+  const [treatmentRecommendation, setTreatmentRecommendation] = useState<TreatmentRecommendation | null>(null);
+  const [isLoadingTreatment, setIsLoadingTreatment] = useState(false);
 
   const handleWaitlistSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,6 +117,41 @@ export default function CropGuardAILandingPage() {
     }
   };
 
+  const fetchTreatmentRecommendations = async (diseaseName: string, confidence: number) => {
+    setIsLoadingTreatment(true);
+    setTreatmentRecommendation(null);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/treatment`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          disease_name: diseaseName,
+          confidence: confidence,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to get treatment recommendations');
+      }
+
+      const result: TreatmentRecommendation = await response.json();
+      setTreatmentRecommendation(result);
+
+    } catch (error) {
+      console.error('Treatment recommendation error:', error);
+      setTreatmentRecommendation({
+        available: false,
+        error: error instanceof Error ? error.message : 'Failed to get treatment recommendations'
+      });
+    } finally {
+      setIsLoadingTreatment(false);
+    }
+  };
+
   const handleImageAnalysis = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -112,6 +162,7 @@ export default function CropGuardAILandingPage() {
 
     setIsAnalyzing(true);
     setPredictionResult(null);
+    setTreatmentRecommendation(null);
 
     try {
       const formData = new FormData();
@@ -129,6 +180,11 @@ export default function CropGuardAILandingPage() {
 
       const result: PredictionResult = await response.json();
       setPredictionResult(result);
+
+      // Fetch treatment recommendations after successful disease detection
+      if (result.prediction && !result.prediction.includes('healthy')) {
+        await fetchTreatmentRecommendations(result.prediction, result.confidence);
+      }
 
       setToast({
         message: 'Analysis completed successfully!',
@@ -151,6 +207,8 @@ export default function CropGuardAILandingPage() {
     setSelectedPlantType('');
     setPredictionResult(null);
     setPreviewImage(null);
+    setTreatmentRecommendation(null);
+    setIsLoadingTreatment(false);
   };
 
   const getDiseaseDisplayName = (className: string): string => {
@@ -611,6 +669,46 @@ export default function CropGuardAILandingPage() {
                     <div>Supported Crops: {predictionResult.supported_crops.join(', ')}</div>
                   </div>
                 </div>
+
+                {/* Treatment Recommendations Section */}
+                {!predictionResult.prediction.includes('healthy') && (
+                  <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4">
+                    <h5 className="font-medium text-green-900 dark:text-green-100 mb-3 flex items-center gap-2">
+                      <Pill className="w-4 h-4" />
+                      Treatment Recommendations
+                    </h5>
+
+                    {isLoadingTreatment ? (
+                      <div className="flex items-center justify-center py-4">
+                        <div className="w-6 h-6 border-2 border-green-600 border-t-transparent rounded-full animate-spin mr-2"></div>
+                        <span className="text-sm text-green-800 dark:text-green-200">Generating treatment recommendations...</span>
+                      </div>
+                    ) : treatmentRecommendation ? (
+                      treatmentRecommendation.available ? (
+                        <div className="space-y-3">
+                          <div className="text-sm text-green-800 dark:text-green-200">
+                            <div className="font-medium">Disease: {treatmentRecommendation.disease}</div>
+                            <div className="text-xs opacity-75">Crop: {treatmentRecommendation.crop} • Confidence: {treatmentRecommendation.confidence?.toFixed(1)}%</div>
+                          </div>
+                          <div className="bg-white dark:bg-slate-800 rounded p-3 text-sm text-slate-700 dark:text-slate-300 whitespace-pre-line border-l-4 border-green-500">
+                            {treatmentRecommendation.recommendations}
+                          </div>
+                          <div className="text-xs text-green-700 dark:text-green-300 opacity-75">
+                            Powered by {treatmentRecommendation.model_used}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-sm text-red-600 dark:text-red-400">
+                          {treatmentRecommendation.error || "Treatment recommendations not available"}
+                        </div>
+                      )
+                    ) : (
+                      <div className="text-sm text-slate-600 dark:text-slate-400">
+                        No treatment recommendations available
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex gap-3 pt-4">
                   <button

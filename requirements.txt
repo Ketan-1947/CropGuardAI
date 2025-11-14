@@ -13,3 +13,6 @@ python-multipart>=0.0.6
 
 # Additional utilities
 numpy>=1.21.0
+
+# OpenAI client for LLM integration
+openai>=1.0.0

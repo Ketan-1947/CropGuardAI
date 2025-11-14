@@ -1,6 +1,7 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import torch
 from PIL import Image
 from torchvision import transforms
@@ -8,10 +9,34 @@ import timm
 import io
 import os
 from typing import Dict, Any
+from openai import OpenAI
+import re
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # --- Configuration ---
 CHECKPOINT_PATH = "vit_plantvillage.pth"
 DEVICE = "cpu"  # Use CPU for deployment, can be changed to "cuda" if GPU available
+
+# --- OpenRouter Configuration ---
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+
+# Initialize OpenAI client for OpenRouter
+openai_client = None
+if OPENROUTER_API_KEY:
+    openai_client = OpenAI(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=OPENROUTER_API_KEY,
+    )
+
+# --- Pydantic Models ---
+class TreatmentRequest(BaseModel):
+    disease_name: str
+    confidence: float = 0.0
 
 # --- Global variables for model ---
 model = None
@@ -60,6 +85,102 @@ def load_model():
     ])
 
     print(f"Model loaded successfully with {len(class_names)} classes: {class_names}")
+
+def get_crop_type_from_disease(disease_name: str) -> str:
+    """Extract crop type from disease class name"""
+    disease_lower = disease_name.lower()
+
+    if 'apple' in disease_lower:
+        return 'Apple'
+    elif 'corn' in disease_lower or 'maize' in disease_lower:
+        return 'Corn'
+    elif 'potato' in disease_lower:
+        return 'Potato'
+    elif 'tomato' in disease_lower:
+        return 'Tomato'
+    else:
+        return 'Unknown Crop'
+
+def get_treatment_recommendations(disease_name: str, confidence_score: float) -> Dict[str, Any]:
+    """Get treatment recommendations from OpenRouter LLM"""
+
+    if not openai_client:
+        return {
+            "error": "LLM service not configured. Please set OPENROUTER_API_KEY environment variable.",
+            "available": False
+        }
+
+    try:
+        # Extract crop type from disease name
+        crop_type = get_crop_type_from_disease(disease_name)
+
+        # Convert disease name to user-friendly format
+        display_disease = disease_name.replace('___', ' ').replace('_', ' ').title()
+
+        # Create structured prompt
+        prompt = f"""You are an expert agricultural advisor. A crop disease has been detected.
+
+Disease: {display_disease}
+Crop: {crop_type}
+Severity: {confidence_score:.1f}%
+
+Provide ACTIONABLE treatment recommendations in this structure:
+
+1. IMMEDIATE ACTIONS (first 24-48 hours):
+   - Pesticide: [Name with dosage per liter]
+   - Application method: [Foliar spray/soil drench]
+
+2. TREATMENT PROTOCOL (next 7-14 days):
+   - Chemical options: [Fungicides with rotation schedule]
+   - Biological options: [Biopesticides if available]
+   - Cultural practices: [Pruning, irrigation, sanitation]
+
+3. PREVENTION MEASURES:
+   - Resistant varieties
+   - Crop rotation strategy
+   - Field sanitation
+
+4. CAUTIONS:
+   - Local regulations
+   - Environmental impact
+   - Pesticide resistance management
+
+Keep recommendations specific, practical, and evidence-based for agricultural professionals."""
+
+        # Make API call to OpenRouter
+        completion = openai_client.chat.completions.create(
+            extra_headers={
+                "HTTP-Referer": "https://cropguard-ai.vercel.app",
+                "X-Title": "CropGuard AI Disease Detection",
+            },
+            model=OPENROUTER_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.3,  # Lower temperature for more consistent recommendations
+            max_tokens=1000
+        )
+
+        recommendations = completion.choices[0].message.content
+
+        return {
+            "available": True,
+            "disease": display_disease,
+            "crop": crop_type,
+            "confidence": confidence_score,
+            "recommendations": recommendations,
+            "model_used": OPENROUTER_MODEL
+        }
+
+    except Exception as e:
+        print(f"LLM API error: {str(e)}")
+        return {
+            "error": f"Failed to get treatment recommendations: {str(e)}",
+            "available": False
+        }
 
 @app.on_event("startup")
 async def startup_event():
@@ -151,16 +272,35 @@ async def predict_disease(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
+@app.post("/treatment")
+async def get_treatment(request: TreatmentRequest):
+    """
+    Get treatment recommendations for detected plant disease using LLM
+
+    - **disease_name**: Name of the detected disease (e.g., "Apple___Apple_scab")
+    - **confidence**: Confidence score from 0.0 to 1.0
+    - Returns: Structured treatment recommendations or error message
+    """
+    recommendations = get_treatment_recommendations(request.disease_name, request.confidence)
+
+    if not recommendations.get("available", False):
+        error_msg = recommendations.get("error", "Treatment recommendations not available")
+        raise HTTPException(status_code=503, detail=error_msg)
+
+    return recommendations
+
 @app.get("/health")
 async def health_check():
     """Detailed health check"""
     model_status = "loaded" if model else "not loaded"
     classes_status = len(class_names) if class_names else 0
+    llm_status = "configured" if openai_client else "not configured"
 
     return {
         "status": "healthy" if model else "unhealthy",
         "model_status": model_status,
         "classes_loaded": classes_status,
+        "llm_status": llm_status,
         "device": DEVICE,
         "checkpoint_path": CHECKPOINT_PATH
     }

@@ -8,6 +8,7 @@ CropGuard AI is a comprehensive solution for agricultural disease detection that
 
 - **Machine Learning Model**: Vision Transformer (ViT) trained on plant disease datasets
 - **REST API**: FastAPI backend for real-time predictions
+- **LLM Treatment Recommendations**: AI-powered treatment suggestions using OpenRouter
 - **Web Interface**: Next.js frontend for easy image upload and results
 - **Multiple Crops**: Support for apples, corn, potatoes, and tomatoes
 
@@ -17,6 +18,7 @@ CropGuard AI is a comprehensive solution for agricultural disease detection that
 - Python 3.8+
 - Node.js 18+ (for frontend)
 - Trained model file (`vit_plantvillage.pth`)
+- OpenRouter API key (for LLM treatment recommendations)
 
 ### 1. Clone and Setup
 ```bash
@@ -28,6 +30,10 @@ cd CropGuardAI
 ```bash
 # Install dependencies
 pip install -r requirements.txt
+
+# Configure environment variables (optional, for LLM treatment recommendations)
+cp .env.example .env
+# Edit .env and add your OpenRouter API key
 
 # Start the API server
 python start_api.py
@@ -107,6 +113,16 @@ curl -X POST "http://localhost:8000/predict" \
      -F "file=@path/to/plant_image.jpg"
 ```
 
+### Get Treatment Recommendations
+```bash
+curl -X POST "http://localhost:8000/treatment" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "disease_name": "Apple___Apple_scab",
+       "confidence": 0.95
+     }'
+```
+
 ### Response Format
 ```json
 {
@@ -121,6 +137,18 @@ curl -X POST "http://localhost:8000/predict" \
   ],
   "model": "Vision Transformer (ViT-Base)",
   "supported_crops": ["Apple", "Corn", "Potato", "Tomato"]
+}
+```
+
+### Treatment Recommendations Response Format
+```json
+{
+  "available": true,
+  "disease": "Apple Scab",
+  "crop": "Apple",
+  "confidence": 0.95,
+  "recommendations": "1. IMMEDIATE ACTIONS (first 24-48 hours):\n   - Pesticide: [Name with dosage per liter]\n   - Application method: [Foliar spray/soil drench]\n\n2. TREATMENT PROTOCOL (next 7-14 days):\n   - Chemical options: [Fungicides with rotation schedule]\n   - Biological options: [Biopesticides if available]\n   - Cultural practices: [Pruning, irrigation, sanitation]\n\n3. PREVENTION MEASURES:\n   - Resistant varieties\n   - Crop rotation strategy\n   - Field sanitation\n\n4. CAUTIONS:\n   - Local regulations\n   - Environmental impact\n   - Pesticide resistance management",
+  "model_used": "qwen/qwen3-4b:free"
 }
 ```
 
