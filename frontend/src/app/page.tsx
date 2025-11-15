@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { LavaLamp } from "@/components/ui/fluid-blob";
 import { GooeyMarquee } from "@/components/ui/gooey-marquee";
@@ -69,6 +70,7 @@ interface TreatmentRecommendation {
 }
 
 export default function CropGuardAILandingPage() {
+  const router = useRouter();
   const [showWaitlistModal, setShowWaitlistModal] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [formData, setFormData] = useState({ name: '', email: '' });
@@ -77,12 +79,7 @@ export default function CropGuardAILandingPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedPlantType, setSelectedPlantType] = useState<string>('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
-
-  // Treatment recommendations state
-  const [treatmentRecommendation, setTreatmentRecommendation] = useState<TreatmentRecommendation | null>(null);
-  const [isLoadingTreatment, setIsLoadingTreatment] = useState(false);
 
   const handleWaitlistSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,40 +114,6 @@ export default function CropGuardAILandingPage() {
     }
   };
 
-  const fetchTreatmentRecommendations = async (diseaseName: string, confidence: number) => {
-    setIsLoadingTreatment(true);
-    setTreatmentRecommendation(null);
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/treatment`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          disease_name: diseaseName,
-          confidence: confidence,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to get treatment recommendations');
-      }
-
-      const result: TreatmentRecommendation = await response.json();
-      setTreatmentRecommendation(result);
-
-    } catch (error) {
-      console.error('Treatment recommendation error:', error);
-      setTreatmentRecommendation({
-        available: false,
-        error: error instanceof Error ? error.message : 'Failed to get treatment recommendations'
-      });
-    } finally {
-      setIsLoadingTreatment(false);
-    }
-  };
 
   const handleImageAnalysis = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,8 +124,6 @@ export default function CropGuardAILandingPage() {
     }
 
     setIsAnalyzing(true);
-    setPredictionResult(null);
-    setTreatmentRecommendation(null);
 
     try {
       const formData = new FormData();
@@ -179,17 +140,39 @@ export default function CropGuardAILandingPage() {
       }
 
       const result: PredictionResult = await response.json();
-      setPredictionResult(result);
 
-      // Fetch treatment recommendations after successful disease detection
+      // Store data in localStorage and navigate to treatment page
+      const sessionId = Date.now().toString();
+      localStorage.setItem(`prediction_${sessionId}`, JSON.stringify(result));
+
+      let url = `/treatment?session=${sessionId}`;
+
+      // If disease detected, fetch treatment recommendations and store them
       if (result.prediction && !result.prediction.includes('healthy')) {
-        await fetchTreatmentRecommendations(result.prediction, result.confidence);
+        try {
+          const treatmentResponse = await fetch(`${API_BASE_URL}/treatment`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              disease_name: result.prediction,
+              confidence: result.confidence,
+            }),
+          });
+
+          if (treatmentResponse.ok) {
+            const treatmentResult: TreatmentRecommendation = await treatmentResponse.json();
+            localStorage.setItem(`treatment_${sessionId}`, JSON.stringify(treatmentResult));
+            url += '&hasTreatment=true';
+          }
+        } catch (treatmentError) {
+          console.warn('Treatment recommendations failed, proceeding without them:', treatmentError);
+        }
       }
 
-      setToast({
-        message: 'Analysis completed successfully!',
-        type: 'success'
-      });
+      // Navigate to treatment page
+      router.push(url);
 
     } catch (error) {
       console.error('Analysis error:', error);
@@ -197,7 +180,6 @@ export default function CropGuardAILandingPage() {
         message: error instanceof Error ? error.message : 'Analysis failed. Please try again.',
         type: 'error'
       });
-    } finally {
       setIsAnalyzing(false);
     }
   };
@@ -205,10 +187,7 @@ export default function CropGuardAILandingPage() {
   const resetAnalysis = () => {
     setSelectedFile(null);
     setSelectedPlantType('');
-    setPredictionResult(null);
     setPreviewImage(null);
-    setTreatmentRecommendation(null);
-    setIsLoadingTreatment(false);
   };
 
   const getDiseaseDisplayName = (className: string): string => {
@@ -529,6 +508,7 @@ export default function CropGuardAILandingPage() {
         </div>
       </footer>
 
+
       {/* Disease Detection Modal */}
       {showWaitlistModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -542,193 +522,82 @@ export default function CropGuardAILandingPage() {
               </p>
             </div>
 
-            {!predictionResult ? (
-              <form onSubmit={handleImageAnalysis} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Plant Image *
-                  </label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleFileChange}
-                    className="w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent dark:bg-slate-700 dark:text-white file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
-                    required
-                  />
-                  <p className="text-xs text-slate-500 mt-1">Supported formats: JPG, JPEG, PNG</p>
-                </div>
-
-                {previewImage && (
-                  <div className="mt-4">
-                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Image Preview:</p>
-                    <div className="relative w-full max-w-xs mx-auto">
-                      <img
-                        src={previewImage}
-                        alt="Preview"
-                        className="w-full h-48 object-cover rounded-lg border border-slate-300 dark:border-slate-600"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Plant Type (Optional)
-                  </label>
-                  <select
-                    value={selectedPlantType}
-                    onChange={(e) => setSelectedPlantType(e.target.value)}
-                    className="w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent dark:bg-slate-700 dark:text-white"
-                  >
-                    <option value="">Auto-detect plant type</option>
-                    <option value="apple">Apple</option>
-                    <option value="corn">Corn</option>
-                    <option value="potato">Potato</option>
-                    <option value="tomato">Tomato</option>
-                  </select>
-                </div>
-
-                <div className="flex gap-3 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowWaitlistModal(false);
-                      resetAnalysis();
-                    }}
-                    className="flex-1 px-4 py-3 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                    disabled={isAnalyzing}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isAnalyzing || !selectedFile}
-                    className="flex-1 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-green-400 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center justify-center gap-2"
-                  >
-                    {isAnalyzing ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                        Analyzing...
-                      </>
-                    ) : (
-                      <>
-                        <Target className="w-4 h-4" />
-                        Analyze Image
-                      </>
-                    )}
-                  </button>
-                </div>
-              </form>
-            ) : (
-              /* Results Display */
-              <div className="space-y-6">
-                <div className="text-center">
-                  <div className="w-16 h-16 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <CheckCircle className="w-8 h-8 text-green-600 dark:text-green-400" />
-                  </div>
-                  <h4 className="text-xl font-semibold text-slate-900 dark:text-white mb-2">
-                    Analysis Complete
-                  </h4>
-                </div>
-
-                <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium text-slate-900 dark:text-white">Primary Diagnosis:</span>
-                    <span className={`font-semibold ${getHealthStatus(predictionResult.prediction).color}`}>
-                      {getHealthStatus(predictionResult.prediction).status}
-                    </span>
-                  </div>
-                  <div className="text-lg font-semibold text-slate-900 dark:text-white mb-1">
-                    {getDiseaseDisplayName(predictionResult.prediction)}
-                  </div>
-                  <div className="text-sm text-slate-600 dark:text-slate-300">
-                    Confidence: {predictionResult.confidence_percentage.toFixed(1)}%
-                  </div>
-                </div>
-
-                <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-4">
-                  <h5 className="font-medium text-slate-900 dark:text-white mb-3">Top 3 Predictions:</h5>
-                  <div className="space-y-2">
-                    {predictionResult.top3_predictions.map((pred, index) => (
-                      <div key={index} className="flex items-center justify-between text-sm">
-                        <span className="text-slate-700 dark:text-slate-300">
-                          {index + 1}. {getDiseaseDisplayName(pred.class)}
-                        </span>
-                        <span className="font-medium text-slate-900 dark:text-white">
-                          {(pred.confidence * 100).toFixed(1)}%
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
-                  <h5 className="font-medium text-blue-900 dark:text-blue-100 mb-2">AI Model Info:</h5>
-                  <div className="text-sm text-blue-800 dark:text-blue-200">
-                    <div>Model: {predictionResult.model}</div>
-                    <div>Supported Crops: {predictionResult.supported_crops.join(', ')}</div>
-                  </div>
-                </div>
-
-                {/* Treatment Recommendations Section */}
-                {!predictionResult.prediction.includes('healthy') && (
-                  <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4">
-                    <h5 className="font-medium text-green-900 dark:text-green-100 mb-3 flex items-center gap-2">
-                      <Pill className="w-4 h-4" />
-                      Treatment Recommendations
-                    </h5>
-
-                    {isLoadingTreatment ? (
-                      <div className="flex items-center justify-center py-4">
-                        <div className="w-6 h-6 border-2 border-green-600 border-t-transparent rounded-full animate-spin mr-2"></div>
-                        <span className="text-sm text-green-800 dark:text-green-200">Generating treatment recommendations...</span>
-                      </div>
-                    ) : treatmentRecommendation ? (
-                      treatmentRecommendation.available ? (
-                        <div className="space-y-3">
-                          <div className="text-sm text-green-800 dark:text-green-200">
-                            <div className="font-medium">Disease: {treatmentRecommendation.disease}</div>
-                            <div className="text-xs opacity-75">Crop: {treatmentRecommendation.crop} • Confidence: {treatmentRecommendation.confidence?.toFixed(1)}%</div>
-                          </div>
-                          <div className="bg-white dark:bg-slate-800 rounded p-3 text-sm text-slate-700 dark:text-slate-300 whitespace-pre-line border-l-4 border-green-500">
-                            {treatmentRecommendation.recommendations}
-                          </div>
-                          <div className="text-xs text-green-700 dark:text-green-300 opacity-75">
-                            Powered by {treatmentRecommendation.model_used}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-sm text-red-600 dark:text-red-400">
-                          {treatmentRecommendation.error || "Treatment recommendations not available"}
-                        </div>
-                      )
-                    ) : (
-                      <div className="text-sm text-slate-600 dark:text-slate-400">
-                        No treatment recommendations available
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="flex gap-3 pt-4">
-                  <button
-                    onClick={resetAnalysis}
-                    className="flex-1 px-4 py-3 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-                  >
-                    Analyze Another Image
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowWaitlistModal(false);
-                      resetAnalysis();
-                    }}
-                    className="flex-1 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
-                  >
-                    Done
-                  </button>
-                </div>
+            <form onSubmit={handleImageAnalysis} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Plant Image *
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileChange}
+                  className="w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent dark:bg-slate-700 dark:text-white file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
+                  required
+                />
+                <p className="text-xs text-slate-500 mt-1">Supported formats: JPG, JPEG, PNG</p>
               </div>
-            )}
+
+              {previewImage && (
+                <div className="mt-4">
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Image Preview:</p>
+                  <div className="relative w-full max-w-xs mx-auto">
+                    <img
+                      src={previewImage}
+                      alt="Preview"
+                      className="w-full h-48 object-cover rounded-lg border border-slate-300 dark:border-slate-600"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Plant Type (Optional)
+                </label>
+                <select
+                  value={selectedPlantType}
+                  onChange={(e) => setSelectedPlantType(e.target.value)}
+                  className="w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent dark:bg-slate-700 dark:text-white"
+                >
+                  <option value="">Auto-detect plant type</option>
+                  <option value="apple">Apple</option>
+                  <option value="corn">Corn</option>
+                  <option value="potato">Potato</option>
+                  <option value="tomato">Tomato</option>
+                </select>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowWaitlistModal(false);
+                    resetAnalysis();
+                  }}
+                  className="flex-1 px-4 py-3 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                  disabled={isAnalyzing}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isAnalyzing || !selectedFile}
+                  className="flex-1 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-green-400 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  {isAnalyzing ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      <Target className="w-4 h-4" />
+                      Analyze Image
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
